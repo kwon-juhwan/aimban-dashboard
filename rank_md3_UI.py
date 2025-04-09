@@ -57,6 +57,8 @@ df_all = pd.concat(all_data, ignore_index=True)
 df_all["날짜"] = pd.to_datetime(df_all["날짜"], errors="coerce")
 df_all["순위"] = pd.to_numeric(df_all["순위"], errors="coerce")
 df_all = df_all.dropna(subset=["날짜", "키워드", "순위", "상품명"])
+df_all = df_all[df_all["키워드"].apply(lambda x: isinstance(x, str) and x.strip().lower() != "undefined")]
+df_all = df_all[df_all["순위"] >= 1]  # 음수나 이상값 제거
 df_all = df_all.sort_values("날짜").drop_duplicates(subset=["날짜", "키워드", "상품명"], keep="first")  # ✅ 중복 제거 추가
 
 # ✅ 사이드바 필터
