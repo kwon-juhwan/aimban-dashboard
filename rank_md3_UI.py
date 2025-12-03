@@ -5,14 +5,9 @@ import os
 
 RESULTS_DIR = "results"
 
-st.set_page_config(
-    page_title="노출 순위 대시보드",
-    page_icon="📈",
-    layout="wide",
-)
+st.set_page_config(page_title="노출 순위 대시보드", layout="wide")
 
-st.title("📊 네이버 쇼핑 노출 순위 대시보드")
-st.caption("results 폴더의 CSV를 기반으로 키워드별 노출 순위 추이를 확인합니다.")
+st.title("네이버 쇼핑 노출 순위 대시보드")
 
 # 1. CSV 파일 읽기
 csv_files = glob.glob(os.path.join(RESULTS_DIR, "*.csv"))
@@ -33,10 +28,8 @@ data = pd.concat(dfs, ignore_index=True)
 # 날짜 타입 변환
 data["date"] = pd.to_datetime(data["date"], errors="coerce")
 
-# =========================
 # 2. 사이드바 필터
-# =========================
-st.sidebar.header("🔎 필터")
+st.sidebar.header("필터")
 
 # 날짜 필터
 min_date = data["date"].min()
@@ -56,69 +49,41 @@ selected_keywords = st.sidebar.multiselect(
     default=all_keywords,
 )
 
-# (옵션) 아임반만 보기 토글
-only_aimban = st.sidebar.checkbox("상품명에 '아임반' 포함만 보기", value=False)
-
-# =========================
 # 3. 필터 적용
-# =========================
 filtered = data[
     (data["date"].dt.date >= start_date)
     & (data["date"].dt.date <= end_date)
     & (data["keyword"].isin(selected_keywords))
 ].copy()
 
-if only_aimban:
-    filtered = filtered[filtered["title"].str.contains("아임반", na=False)]
+# -----------------------------
+# 🔹 키워드별 제품 최신 순위 표
+# -----------------------------
+st.subheader("키워드별 제품 최신 순위")
 
-# =========================
-# 3-1. 상단 요약 카드
-# =========================
-st.subheader("요약 정보")
-
-if filtered.empty:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("데이터 건수", 0)
-    col2.metric("기간(일)", 0)
-    col3.metric("선택된 키워드 수", len(selected_keywords))
-    col4.metric("최신 데이터 날짜", "-")
-else:
-    num_rows = len(filtered)
-    num_days = filtered["date"].dt.date.nunique()
-    num_kw = filtered["keyword"].nunique()
-    latest_date = filtered["date"].max().date().isoformat()
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("데이터 건수", f"{num_rows:,}")
-    col2.metric("기간(일)", num_days)
-    col3.metric("선택된 키워드 수", num_kw)
-    col4.metric("최신 데이터 날짜", latest_date)
-
-# =========================
-# 4. 필터 적용된 결과표
-# =========================
-st.subheader("필터 적용된 결과표")
-
-if filtered.empty:
-    st.info("현재 필터 조건에 해당되는 데이터가 없습니다.")
-else:
-    filtered_sorted = filtered.sort_values(["date", "keyword", "rank"])
-
-    with st.expander("📄 상세 데이터 보기", expanded=True):
-        st.dataframe(filtered_sorted, use_container_width=True)
-
-    # 다운로드 버튼
-    csv_bytes = filtered_sorted.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button(
-        label="📥 필터 적용 데이터 다운로드 (CSV)",
-        data=csv_bytes,
-        file_name="naver_rank_filtered.csv",
-        mime="text/csv",
+if not filtered.empty:
+    # 날짜 기준으로 정렬 후, keyword+title 별로 가장 최신 행만 남기기
+    latest_per_product = (
+        filtered.sort_values("date")
+        .groupby(["keyword", "title"], as_index=False)
+        .tail(1)
+        .sort_values(["keyword", "rank"])
     )
 
-# =========================
-# 5. 키워드별 순위 추이 차트 (기존 로직 그대로)
-# =========================
+    st.dataframe(
+        latest_per_product[["date", "keyword", "title", "rank"]],
+        use_container_width=True,
+    )
+else:
+    st.info("현재 필터 조건에 해당되는 데이터가 없습니다.")
+
+# -----------------------------
+# 기존 결과표 (그대로 유지)
+# -----------------------------
+st.subheader("필터 적용된 전체 결과표")
+st.dataframe(filtered.sort_values(["date", "keyword", "rank"]))
+
+# 4. 키워드별 순위 추이 차트 (선택)
 st.subheader("키워드별 순위 추이 (그래프)")
 
 if not filtered.empty:
@@ -127,7 +92,7 @@ if not filtered.empty:
 
     # 키워드 하나만 선택되었을 때는 제목까지 같이 보고 싶을 수도 있음
     if len(selected_keywords) == 1:
-        st.caption(f"선택된 키워드: {selected_keywords[0]} (같은 날짜의 최소 순위 기준)")
+        st.caption(f"선택된 키워드: {selected_keywords[0]}")
         # 같은 날짜에 같은 키워드+상품 여러 개 있을 수 있으니, 최소 순위만 사용
         chart_df = (
             filtered.groupby(["date"])["rank"]
@@ -149,4 +114,4 @@ if not filtered.empty:
         chart_df.pivot(index="date", columns="keyword", values="rank")
     )
 else:
-    st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건을 조정해 보세요.")
+    st.info("현재 필터 조건에 해당되는 데이터가 없습니다.")
