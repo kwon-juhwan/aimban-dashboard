@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import glob
 import os
-import altair as alt  # 🔹 추가
+import altair as alt
 
 RESULTS_DIR = "results"
 
@@ -20,7 +20,7 @@ if not csv_files:
 dfs = []
 for f in csv_files:
     df = pd.read_csv(f, header=None, encoding="utf-8-sig")
-    # rank_md3 기준: [날짜, 키워드, 순위, 상품명]
+    # [날짜, 키워드, 순위, 상품명]
     df.columns = ["date", "keyword", "rank", "title"]
     dfs.append(df)
 
@@ -60,20 +60,20 @@ filtered = data[
 st.subheader("필터 적용된 결과표")
 st.dataframe(filtered.sort_values(["date", "keyword", "rank"]))
 
-# 4. 키워드별 제품 순위 추이 (그래프)
+# 4. 키워드별 제품 순위 추이 (상품명별 개별 그래프)
 st.subheader("키워드별 제품 순위 추이 (그래프)")
 
 if not filtered.empty:
-    # 순위 숫자형 변환
+    # rank 숫자형
     filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
 
-    # Altair 기본 차트 설정
+    # Altair 기본 차트 (점 + 선)
     base = alt.Chart(filtered).encode(
         x=alt.X("date:T", title="날짜"),
         y=alt.Y("rank:Q", title="순위"),
         color=alt.Color(
             "keyword:N",
-            title="키워드",          # 🔹 우측 범례 제목
+            title="키워드",             # 우측 범례 제목
             legend=alt.Legend(orient="right")
         ),
         tooltip=[
@@ -84,19 +84,24 @@ if not filtered.empty:
         ],
     )
 
-    # 키워드별 점 (색상으로 구분)
-    points = base.mark_circle(size=80)
+    # 키워드별 선 + 점
+    line = base.mark_line(point=True)
+    points = base.mark_circle(size=60)
 
-    # 각 점 옆에 상품명 텍스트 표시
-    text = base.mark_text(
-        align="left",
-        baseline="middle",
-        dx=5,   # 점에서 오른쪽으로 약간 떨어뜨리기
-    ).encode(
-        text="title:N"
+    per_product_chart = (line + points).properties(
+        width=280,
+        height=200,
     )
 
-    chart = (points + text).properties(height=400).interactive()
+    # 🔥 상품명(title)별로 그래프를 쪼개서 그리기 (facet)
+    chart = per_product_chart.facet(
+        facet=alt.Facet("title:N", title=None),
+        columns=3,   # 한 줄에 3개씩 배치 (원하면 2나 4로 변경 가능)
+    ).resolve_scale(
+        y="shared",  # 모든 그래프가 같은 순위 스케일 사용
+        x="shared",
+        color="shared"
+    )
 
     st.altair_chart(chart, use_container_width=True)
 else:
