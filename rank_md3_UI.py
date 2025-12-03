@@ -1,94 +1,152 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import glob
 import os
 
-# ✅ 페이지 설정
-st.set_page_config(layout="wide", page_title="아임반 키워드 순위 대시보드", page_icon="📊")
+RESULTS_DIR = "results"
 
-# ✅ 네이버 스타일 HTML & CSS
-st.markdown("""
-    <style>
-        body {
-            background-color: #f9f9f9;
-        }
-        .title {
-            font-size: 32px;
-            font-weight: 700;
-            color: #1e1e1e;
-            text-align: left;
-            margin-bottom: 0px;
-        }
-        .subtitle {
-            font-size: 16px;
-            color: #666666;
-            margin-bottom: 30px;
-        }
-        .card {
-            background-color: white;
-            padding: 30px 25px 20px 25px;
-            border-radius: 10px;
-            box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.05);
-            margin-bottom: 30px;
-        }
-    </style>
-""", unsafe_allow_html=True)
+st.set_page_config(
+    page_title="노출 순위 대시보드",
+    page_icon="📈",
+    layout="wide",
+)
 
-# ✅ 상단 제목
-st.markdown("<div class='title'>📊 아임반 상품 키워드 순위 추이 대시보드</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>매일 수집된 데이터를 기반으로 키워드 순위 변화를 시각화합니다.</div>", unsafe_allow_html=True)
+st.title("📊 네이버 쇼핑 노출 순위 대시보드")
+st.caption("results 폴더의 CSV를 기반으로 키워드별 노출 순위 추이를 확인합니다.")
 
-# ✅ results 폴더에서 CSV 불러오기
-results_dir = "results"
-os.makedirs(results_dir, exist_ok=True)
+# 1. CSV 파일 읽기
+csv_files = glob.glob(os.path.join(RESULTS_DIR, "*.csv"))
 
-all_data = []
-for file in sorted(os.listdir(results_dir)):
-    if file.endswith(".csv"):
-        df = pd.read_csv(os.path.join(results_dir, file), encoding="utf-8-sig", header=None)
-        df.columns = ["날짜", "키워드", "순위", "상품명"]
-        all_data.append(df)
-
-if not all_data:
-    st.warning("⚠️ 저장된 데이터가 없습니다. 먼저 수집 스크립트를 실행해 주세요.")
+if not csv_files:
+    st.warning("results 폴더에 CSV 파일이 없습니다. 먼저 수집 스크립트를 실행해주세요.")
     st.stop()
 
-df_all = pd.concat(all_data, ignore_index=True)
-df_all["날짜"] = pd.to_datetime(df_all["날짜"], errors="coerce")
-df_all["순위"] = pd.to_numeric(df_all["순위"], errors="coerce")
-df_all = df_all.dropna(subset=["날짜", "키워드", "순위", "상품명"])
-df_all = df_all[df_all["키워드"].apply(lambda x: isinstance(x, str) and x.strip().lower() != "undefined")]
-df_all = df_all[df_all["순위"] >= 1]  # 음수나 이상값 제거
-df_all = df_all.sort_values("날짜").drop_duplicates(subset=["날짜", "키워드", "상품명"], keep="first")  # ✅ 중복 제거 추가
+dfs = []
+for f in csv_files:
+    df = pd.read_csv(f, header=None, encoding="utf-8-sig")
+    # rank_md3 기준: [날짜, 키워드, 순위, 상품명]
+    df.columns = ["date", "keyword", "rank", "title"]
+    dfs.append(df)
 
-# ✅ 사이드바 필터
-st.sidebar.title("🔍 필터")
-products = df_all["상품명"].unique().tolist()
-selected_products = st.sidebar.multiselect("🛍️ 상품명 선택", products, default=products)
+data = pd.concat(dfs, ignore_index=True)
 
-# ✅ 상품별 카드 UI로 시각화
-for product in selected_products:
-    st.markdown(f"<div class='card'><h4>🛍️ {product}</h4>", unsafe_allow_html=True)
+# 날짜 타입 변환
+data["date"] = pd.to_datetime(data["date"], errors="coerce")
 
-    product_df = df_all[df_all["상품명"] == product]
+# =========================
+# 2. 사이드바 필터
+# =========================
+st.sidebar.header("🔎 필터")
 
-    fig = px.line(
-        product_df,
-        x="날짜",
-        y="순위",
-        color="키워드",
-        markers=True,
-        title="",
-        hover_data=["키워드", "순위"]
+# 날짜 필터
+min_date = data["date"].min()
+max_date = data["date"].max()
+start_date, end_date = st.sidebar.date_input(
+    "날짜 범위",
+    value=(min_date.date(), max_date.date()),
+    min_value=min_date.date(),
+    max_value=max_date.date(),
+)
+
+# 키워드 필터
+all_keywords = sorted(data["keyword"].unique())
+selected_keywords = st.sidebar.multiselect(
+    "키워드 선택",
+    options=all_keywords,
+    default=all_keywords,
+)
+
+# (옵션) 아임반만 보기 토글
+only_aimban = st.sidebar.checkbox("상품명에 '아임반' 포함만 보기", value=False)
+
+# =========================
+# 3. 필터 적용
+# =========================
+filtered = data[
+    (data["date"].dt.date >= start_date)
+    & (data["date"].dt.date <= end_date)
+    & (data["keyword"].isin(selected_keywords))
+].copy()
+
+if only_aimban:
+    filtered = filtered[filtered["title"].str.contains("아임반", na=False)]
+
+# =========================
+# 3-1. 상단 요약 카드
+# =========================
+st.subheader("요약 정보")
+
+if filtered.empty:
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("데이터 건수", 0)
+    col2.metric("기간(일)", 0)
+    col3.metric("선택된 키워드 수", len(selected_keywords))
+    col4.metric("최신 데이터 날짜", "-")
+else:
+    num_rows = len(filtered)
+    num_days = filtered["date"].dt.date.nunique()
+    num_kw = filtered["keyword"].nunique()
+    latest_date = filtered["date"].max().date().isoformat()
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("데이터 건수", f"{num_rows:,}")
+    col2.metric("기간(일)", num_days)
+    col3.metric("선택된 키워드 수", num_kw)
+    col4.metric("최신 데이터 날짜", latest_date)
+
+# =========================
+# 4. 필터 적용된 결과표
+# =========================
+st.subheader("필터 적용된 결과표")
+
+if filtered.empty:
+    st.info("현재 필터 조건에 해당되는 데이터가 없습니다.")
+else:
+    filtered_sorted = filtered.sort_values(["date", "keyword", "rank"])
+
+    with st.expander("📄 상세 데이터 보기", expanded=True):
+        st.dataframe(filtered_sorted, use_container_width=True)
+
+    # 다운로드 버튼
+    csv_bytes = filtered_sorted.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button(
+        label="📥 필터 적용 데이터 다운로드 (CSV)",
+        data=csv_bytes,
+        file_name="naver_rank_filtered.csv",
+        mime="text/csv",
     )
-    fig.update_yaxes(autorange="reversed", title="순위 (1위가 위)")
-    fig.update_layout(
-        xaxis_title="날짜",
-        legend_title="키워드",
-        title_font=dict(size=16),
-        margin=dict(t=10, l=0, r=0, b=0),
-        height=500
-    )
 
-    st.plotly_chart(fig, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+# =========================
+# 5. 키워드별 순위 추이 차트 (기존 로직 그대로)
+# =========================
+st.subheader("키워드별 순위 추이 (그래프)")
+
+if not filtered.empty:
+    # 순위는 숫자형으로
+    filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
+
+    # 키워드 하나만 선택되었을 때는 제목까지 같이 보고 싶을 수도 있음
+    if len(selected_keywords) == 1:
+        st.caption(f"선택된 키워드: {selected_keywords[0]} (같은 날짜의 최소 순위 기준)")
+        # 같은 날짜에 같은 키워드+상품 여러 개 있을 수 있으니, 최소 순위만 사용
+        chart_df = (
+            filtered.groupby(["date"])["rank"]
+            .min()
+            .reset_index()
+            .sort_values("date")
+        )
+    else:
+        # 여러 키워드 → 키워드별 최소 순위를 사용
+        chart_df = (
+            filtered.groupby(["date", "keyword"])["rank"]
+            .min()
+            .reset_index()
+            .sort_values("date")
+        )
+
+    # 순위가 낮을수록 상위이므로 y축 뒤집어서 보여 주는 게 직관적
+    st.line_chart(
+        chart_df.pivot(index="date", columns="keyword", values="rank")
+    )
+else:
+    st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건을 조정해 보세요.")
