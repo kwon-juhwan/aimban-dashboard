@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import glob
 import os
+import altair as alt  # ✅ 추가
 
 RESULTS_DIR = "results"
 
@@ -143,11 +144,12 @@ else:
     filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
 
     def draw_product_chart(title: str):
-        """특정 상품명에 대한 키워드별 순위 추이 그래프를 그립니다."""
+        """특정 상품명에 대한 키워드별 순위 추이 그래프 (점 + 선, 툴팁)"""
         product_df = filtered[filtered["title"] == title].copy()
         if product_df.empty:
             return
 
+        # 같은 날짜에 같은 키워드가 여러 개면 최소 순위 사용
         grouped = (
             product_df.groupby(["date", "keyword"])["rank"]
             .min()
@@ -155,24 +157,38 @@ else:
             .sort_values("date")
         )
 
-        chart_df = grouped.pivot(
-            index="date",
-            columns="keyword",
-            values="rank",
-        ).sort_index()
-
-        if chart_df.empty:
+        if grouped.empty:
             return
 
+        # Altair 차트: 점 + 선 + 툴팁, 하단 범례
+        base = alt.Chart(grouped).encode(
+            x=alt.X("date:T", title="날짜"),
+            y=alt.Y("rank:Q", title="순위"),
+            color=alt.Color(
+                "keyword:N",
+                title="키워드",
+                legend=alt.Legend(orient="bottom")  # 👈 키워드 범례 항상 표시
+            ),
+            tooltip=[
+                alt.Tooltip("date:T", title="날짜"),
+                alt.Tooltip("keyword:N", title="키워드"),
+                alt.Tooltip("rank:Q", title="순위"),
+            ],
+        )
+
+        chart = base.mark_line(point=alt.OverlayMarkDef(size=60)).properties(
+            height=260
+        )
+
         st.caption(f"상품명: {title}")
-        st.line_chart(chart_df, use_container_width=True)
+        st.altair_chart(chart, use_container_width=True)
         st.markdown("---")
 
-    # 5-1. 먼저 선택한 상품의 그래프
+    # 5-1. 먼저 선택한 상품 그래프
     if selected_title is not None:
         draw_product_chart(selected_title)
 
-    # 5-2. 나머지 모든 상품 그래프
+    # 5-2. 나머지 상품 그래프
     for title in product_titles:
         if title == selected_title:
             continue
