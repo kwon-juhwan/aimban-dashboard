@@ -94,7 +94,6 @@ else:
     num_days = filtered["date"].dt.date.nunique()
     num_kw = filtered["keyword"].nunique()
     latest_date = filtered["date"].max().date().isoformat()
-    avg_rank = filtered["rank"].mean()
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("데이터 건수", f"{num_rows:,}")
@@ -144,8 +143,7 @@ else:
             if improved.empty:
                 st.write("상승한 키워드가 없습니다.")
             else:
-                show_up = improved.copy()
-                show_up = show_up.rename(
+                show_up = improved.rename(
                     columns={
                         "keyword": "키워드",
                         "prev_rank": "이전 순위",
@@ -160,8 +158,7 @@ else:
             if dropped.empty:
                 st.write("하락한 키워드가 없습니다.")
             else:
-                show_down = dropped.copy()
-                show_down = show_down.rename(
+                show_down = dropped.rename(
                     columns={
                         "keyword": "키워드",
                         "prev_rank": "이전 순위",
@@ -174,8 +171,8 @@ else:
         # ---- 노출 추가 / 소멸 키워드 ----
         st.markdown("### 🆕 노출이 추가되거나 사라진 키워드")
 
-        prev_only = prev_rank[~prev_rank["keyword"].isin(latest_rank["keyword"])]  # 이전에만
-        new_only = latest_rank[~latest_rank["keyword"].isin(prev_rank["keyword"])]  # 최근에만
+        prev_only = prev_rank[~prev_rank["keyword"].isin(latest_rank["keyword"])]
+        new_only = latest_rank[~latest_rank["keyword"].isin(prev_rank["keyword"])]
 
         col_new, col_lost = st.columns(2)
         with col_new:
@@ -228,7 +225,7 @@ else:
         options=product_titles,
     )
 
-# 기본은 전체 보기 → False
+# 기본: 전체 그래프 보이게 (False)
 show_only_selected = st.sidebar.checkbox("선택한 상품만 그래프로 보기", value=False)
 
 # =========================
@@ -253,17 +250,26 @@ else:
             .reset_index()
             .sort_values("date")
         )
-
         if grouped.empty:
             return
 
+        # 🔹 y축 도메인에 여유를 주어 위·아래로 붙지 않게
+        min_rank = grouped["rank"].min()
+        max_rank = grouped["rank"].max()
+        padding = max(3, int((max_rank - min_rank) * 0.1))  # 범위의 10% 또는 최소 3
+        y_scale = alt.Scale(domain=[min_rank - padding, max_rank + padding])
+
+        # 🔹 키워드 개수에 따라 그래프 높이를 키워서 점 간격 확보
+        num_keywords = grouped["keyword"].nunique()
+        height = max(260, 40 + num_keywords * 20)
+
         base = alt.Chart(grouped).encode(
             x=alt.X("date:T", title="날짜"),
-            y=alt.Y("rank:Q", title="순위"),
+            y=alt.Y("rank:Q", title="순위", scale=y_scale),
             color=alt.Color(
                 "keyword:N",
                 title="키워드",
-                legend=alt.Legend(orient="bottom"),  # 키워드 범례 항상 표시
+                legend=alt.Legend(orient="bottom"),
             ),
             tooltip=[
                 alt.Tooltip("date:T", title="날짜"),
@@ -272,8 +278,8 @@ else:
             ],
         )
 
-        chart = base.mark_line(point=alt.OverlayMarkDef(size=60)).properties(
-            height=260
+        chart = base.mark_line(point=alt.OverlayMarkDef(size=55)).properties(
+            height=height
         )
 
         st.caption(f"상품명: {title}")
