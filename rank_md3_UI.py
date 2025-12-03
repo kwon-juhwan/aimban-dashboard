@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import glob
 import os
+import altair as alt  # 🔹 추가
 
 RESULTS_DIR = "results"
 
@@ -59,27 +60,44 @@ filtered = data[
 st.subheader("필터 적용된 결과표")
 st.dataframe(filtered.sort_values(["date", "keyword", "rank"]))
 
-# 4. 키워드별 제품 순위 추이 차트
+# 4. 키워드별 제품 순위 추이 (그래프)
 st.subheader("키워드별 제품 순위 추이 (그래프)")
 
 if not filtered.empty:
     # 순위 숫자형 변환
     filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
 
-    # 날짜 기준 정렬 후, (date, keyword, title) 별 최소 순위 사용
-    chart_df = (
-        filtered
-        .sort_values("date")
-        .groupby(["date", "keyword", "title"], as_index=False)["rank"]
-        .min()
+    # Altair 기본 차트 설정
+    base = alt.Chart(filtered).encode(
+        x=alt.X("date:T", title="날짜"),
+        y=alt.Y("rank:Q", title="순위"),
+        color=alt.Color(
+            "keyword:N",
+            title="키워드",          # 🔹 우측 범례 제목
+            legend=alt.Legend(orient="right")
+        ),
+        tooltip=[
+            alt.Tooltip("date:T", title="날짜"),
+            alt.Tooltip("keyword:N", title="키워드"),
+            alt.Tooltip("title:N", title="상품명"),
+            alt.Tooltip("rank:Q", title="순위"),
+        ],
     )
 
-    # 시리즈 이름: "키워드 | 상품명"
-    chart_df["series"] = chart_df["keyword"] + " | " + chart_df["title"]
+    # 키워드별 점 (색상으로 구분)
+    points = base.mark_circle(size=80)
 
-    # 피벗: 날짜별 (키워드+상품명) 순위
-    pivot_df = chart_df.pivot(index="date", columns="series", values="rank")
+    # 각 점 옆에 상품명 텍스트 표시
+    text = base.mark_text(
+        align="left",
+        baseline="middle",
+        dx=5,   # 점에서 오른쪽으로 약간 떨어뜨리기
+    ).encode(
+        text="title:N"
+    )
 
-    st.line_chart(pivot_df)
+    chart = (points + text).properties(height=400).interactive()
+
+    st.altair_chart(chart, use_container_width=True)
 else:
     st.info("현재 필터 조건에 해당되는 데이터가 없습니다.")
