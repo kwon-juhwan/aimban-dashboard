@@ -117,36 +117,55 @@ else:
     )
 
 # =========================
-# 5. 키워드별 순위 추이 차트 (기존 로직 그대로)
+# 4-1. 상품 선택 (키워드별 제품 노출순위용)
 # =========================
-st.subheader("키워드별 순위 추이 (그래프)")
+st.sidebar.subheader("📦 상품 선택(그래프용)")
 
-if not filtered.empty:
-    # 순위는 숫자형으로
-    filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
-
-    # 키워드 하나만 선택되었을 때는 제목까지 같이 보고 싶을 수도 있음
-    if len(selected_keywords) == 1:
-        st.caption(f"선택된 키워드: {selected_keywords[0]} (같은 날짜의 최소 순위 기준)")
-        # 같은 날짜에 같은 키워드+상품 여러 개 있을 수 있으니, 최소 순위만 사용
-        chart_df = (
-            filtered.groupby(["date"])["rank"]
-            .min()
-            .reset_index()
-            .sort_values("date")
-        )
-    else:
-        # 여러 키워드 → 키워드별 최소 순위를 사용
-        chart_df = (
-            filtered.groupby(["date", "keyword"])["rank"]
-            .min()
-            .reset_index()
-            .sort_values("date")
-        )
-
-    # 순위가 낮을수록 상위이므로 y축 뒤집어서 보여 주는 게 직관적
-    st.line_chart(
-        chart_df.pivot(index="date", columns="keyword", values="rank")
-    )
+if filtered.empty:
+    selected_title = None
 else:
-    st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건을 조정해 보세요.")
+    product_titles = sorted(filtered["title"].unique())
+    selected_title = st.sidebar.selectbox(
+        "그래프로 볼 상품명",
+        options=product_titles,
+    )
+
+# =========================
+# 5. 키워드별 제품 노출 순위 추이 (그래프)
+# =========================
+st.subheader("키워드별 제품 순위 추이 (그래프)")
+
+if filtered.empty or selected_title is None:
+    st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건이나 상품 선택을 확인해주세요.")
+else:
+    # 선택한 상품만 추출
+    product_df = filtered[filtered["title"] == selected_title].copy()
+
+    if product_df.empty:
+        st.info("선택한 상품에 대한 데이터가 없습니다.")
+    else:
+        # 순위 숫자형으로
+        product_df["rank"] = pd.to_numeric(product_df["rank"], errors="coerce")
+
+        # 같은 날짜에 같은 키워드가 여러 번 있으면 최소 순위만 사용
+        grouped = (
+            product_df.groupby(["date", "keyword"])["rank"]
+            .min()
+            .reset_index()
+            .sort_values("date")
+        )
+
+        # 날짜 x 키워드 피벗 → 각 키워드가 하나의 라인
+        chart_df = grouped.pivot(
+            index="date",
+            columns="keyword",
+            values="rank",
+        ).sort_index()
+
+        st.caption(f"상품명: {selected_title}")
+
+        if chart_df.empty:
+            st.info("그래프로 표시할 데이터가 없습니다.")
+        else:
+            # X축: 날짜, Y축: 순위, 각 라인: 키워드
+            st.line_chart(chart_df, use_container_width=True)
