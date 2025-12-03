@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import glob
 import os
-import altair as alt
 
 RESULTS_DIR = "results"
 
@@ -60,49 +59,54 @@ filtered = data[
 st.subheader("필터 적용된 결과표")
 st.dataframe(filtered.sort_values(["date", "keyword", "rank"]))
 
-# 4. 키워드별 제품 순위 추이 (상품명별 개별 그래프)
+# 3-1. 상품 선택 (그래프용)
+st.sidebar.subheader("상품 선택")
+
+if filtered.empty:
+    selected_title = None
+else:
+    product_titles = sorted(filtered["title"].unique())
+    selected_title = st.sidebar.selectbox(
+        "그래프로 볼 상품명",
+        options=product_titles,
+    )
+
+# 4. 키워드별 제품 순위 추이 (그래프)
 st.subheader("키워드별 제품 순위 추이 (그래프)")
 
-if not filtered.empty:
-    # rank 숫자형
-    filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
-
-    # Altair 기본 차트 (점 + 선)
-    base = alt.Chart(filtered).encode(
-        x=alt.X("date:T", title="날짜"),
-        y=alt.Y("rank:Q", title="순위"),
-        color=alt.Color(
-            "keyword:N",
-            title="키워드",             # 우측 범례 제목
-            legend=alt.Legend(orient="right")
-        ),
-        tooltip=[
-            alt.Tooltip("date:T", title="날짜"),
-            alt.Tooltip("keyword:N", title="키워드"),
-            alt.Tooltip("title:N", title="상품명"),
-            alt.Tooltip("rank:Q", title="순위"),
-        ],
-    )
-
-    # 키워드별 선 + 점
-    line = base.mark_line(point=True)
-    points = base.mark_circle(size=60)
-
-    per_product_chart = (line + points).properties(
-        width=280,
-        height=200,
-    )
-
-    # 🔥 상품명(title)별로 그래프를 쪼개서 그리기 (facet)
-    chart = per_product_chart.facet(
-        facet=alt.Facet("title:N", title=None),
-        columns=3,   # 한 줄에 3개씩 배치 (원하면 2나 4로 변경 가능)
-    ).resolve_scale(
-        y="shared",  # 모든 그래프가 같은 순위 스케일 사용
-        x="shared",
-        color="shared"
-    )
-
-    st.altair_chart(chart, use_container_width=True)
+if filtered.empty or selected_title is None:
+    st.info("현재 필터 조건에 해당되는 데이터가 없거나, 선택할 상품명이 없습니다.")
 else:
-    st.info("현재 필터 조건에 해당되는 데이터가 없습니다.")
+    # 선택한 상품만 필터
+    product_df = filtered[filtered["title"] == selected_title].copy()
+
+    if product_df.empty:
+        st.info("선택한 상품에 대한 데이터가 없습니다.")
+    else:
+        # 순위 숫자형 변환
+        product_df["rank"] = pd.to_numeric(product_df["rank"], errors="coerce")
+
+        # 날짜-키워드별 최소 순위 사용 (같은 날짜에 여러 행이 있을 경우)
+        grouped = (
+            product_df
+            .groupby(["date", "keyword"])["rank"]
+            .min()
+            .reset_index()
+            .sort_values("date")
+        )
+
+        # 피벗: index=날짜, columns=키워드, values=순위
+        chart_df = grouped.pivot(
+            index="date",
+            columns="keyword",
+            values="rank",
+        ).sort_index()
+
+        # 그래프 제목에 상품명 표시
+        st.caption(f"상품명: {selected_title}")
+
+        if chart_df.empty:
+            st.info("그래프로 표시할 데이터가 없습니다.")
+        else:
+            # X축: 날짜, Y축: 순위, 컬러/범례: 키워드
+            st.line_chart(chart_df, use_container_width=True)
