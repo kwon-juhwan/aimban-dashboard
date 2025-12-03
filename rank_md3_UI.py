@@ -74,8 +74,12 @@ filtered = data[
 if only_aimban:
     filtered = filtered[filtered["title"].str.contains("아임반", na=False)]
 
+# 순위 숫자형으로 변환 (요약/그래프에서 공통 사용)
+if not filtered.empty:
+    filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
+
 # =========================
-# 3-1. 요약 정보
+# 3-1. 요약 정보 + 변화 분석
 # =========================
 st.subheader("요약 정보")
 
@@ -90,12 +94,103 @@ else:
     num_days = filtered["date"].dt.date.nunique()
     num_kw = filtered["keyword"].nunique()
     latest_date = filtered["date"].max().date().isoformat()
+    avg_rank = filtered["rank"].mean()
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("데이터 건수", f"{num_rows:,}")
     col2.metric("기간(일)", num_days)
-    col3.metric("선택된 키워드 수", num_kw)
+    col3.metric("노출 키워드 수", num_kw)
     col4.metric("최신 데이터 날짜", latest_date)
+
+    # ---- 최근 날짜 대비 변화 분석 ----
+    st.markdown("### 🔄 최근 날짜 대비 키워드 순위 변화")
+
+    unique_dates = sorted(filtered["date"].dt.date.unique())
+    if len(unique_dates) < 2:
+        st.info("순위 변화를 보려면 최소 2일 이상의 데이터가 필요합니다.")
+    else:
+        last_date = unique_dates[-1]
+        prev_date = unique_dates[-2]
+
+        latest_df = filtered[filtered["date"].dt.date == last_date]
+        prev_df = filtered[filtered["date"].dt.date == prev_date]
+
+        latest_rank = (
+            latest_df.groupby("keyword")["rank"]
+            .min()
+            .reset_index()
+            .rename(columns={"rank": "latest_rank"})
+        )
+        prev_rank = (
+            prev_df.groupby("keyword")["rank"]
+            .min()
+            .reset_index()
+            .rename(columns={"rank": "prev_rank"})
+        )
+
+        merged = prev_rank.merge(latest_rank, on="keyword", how="outer")
+
+        # 상승/하락 키워드 (두 날 모두에 존재하는 키워드만)
+        change = merged.dropna(subset=["prev_rank", "latest_rank"]).copy()
+        change["diff"] = change["prev_rank"] - change["latest_rank"]  # +면 상승, -면 하락
+
+        improved = change[change["diff"] > 0].sort_values("diff", ascending=False).head(5)
+        dropped = change[change["diff"] < 0].sort_values("diff", ascending=True).head(5)
+
+        col_up, col_down = st.columns(2)
+
+        with col_up:
+            st.markdown(f"**📈 순위 상승 키워드 ( {prev_date} → {last_date} )**")
+            if improved.empty:
+                st.write("상승한 키워드가 없습니다.")
+            else:
+                show_up = improved.copy()
+                show_up = show_up.rename(
+                    columns={
+                        "keyword": "키워드",
+                        "prev_rank": "이전 순위",
+                        "latest_rank": "최근 순위",
+                        "diff": "개선 폭",
+                    }
+                )
+                st.dataframe(show_up, hide_index=True, use_container_width=True)
+
+        with col_down:
+            st.markdown(f"**📉 순위 하락 키워드 ( {prev_date} → {last_date} )**")
+            if dropped.empty:
+                st.write("하락한 키워드가 없습니다.")
+            else:
+                show_down = dropped.copy()
+                show_down = show_down.rename(
+                    columns={
+                        "keyword": "키워드",
+                        "prev_rank": "이전 순위",
+                        "latest_rank": "최근 순위",
+                        "diff": "변화 폭",
+                    }
+                )
+                st.dataframe(show_down, hide_index=True, use_container_width=True)
+
+        # ---- 노출 추가 / 소멸 키워드 ----
+        st.markdown("### 🆕 노출이 추가되거나 사라진 키워드")
+
+        prev_only = prev_rank[~prev_rank["keyword"].isin(latest_rank["keyword"])]  # 이전에만
+        new_only = latest_rank[~latest_rank["keyword"].isin(prev_rank["keyword"])]  # 최근에만
+
+        col_new, col_lost = st.columns(2)
+        with col_new:
+            st.markdown(f"**새로 노출된 키워드 ( {last_date} 기준 )**")
+            if new_only.empty:
+                st.write("새로운 키워드가 없습니다.")
+            else:
+                st.write(", ".join(sorted(new_only["keyword"].tolist())))
+
+        with col_lost:
+            st.markdown(f"**노출이 사라진 키워드 ( {prev_date} 기준 )**")
+            if prev_only.empty:
+                st.write("사라진 키워드가 없습니다.")
+            else:
+                st.write(", ".join(sorted(prev_only["keyword"].tolist())))
 
 # =========================
 # 4. 필터 적용된 결과표
@@ -133,8 +228,8 @@ else:
         options=product_titles,
     )
 
-# 선택한 상품만 볼지 여부
-show_only_selected = st.sidebar.checkbox("선택한 상품만 그래프로 보기", value=True)
+# 기본은 전체 보기 → False
+show_only_selected = st.sidebar.checkbox("선택한 상품만 그래프로 보기", value=False)
 
 # =========================
 # 5. 키워드별 제품 순위 추이 (그래프)
@@ -144,8 +239,6 @@ st.subheader("키워드별 제품 순위 추이 (그래프)")
 if filtered.empty or not product_titles:
     st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건을 확인해주세요.")
 else:
-    # rank 숫자형 변환
-    filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
 
     def draw_product_chart(title: str):
         """특정 상품명에 대한 키워드별 순위 추이 그래프 (Altair: 선 + 점 + 툴팁)"""
@@ -191,7 +284,7 @@ else:
     if selected_title is not None:
         draw_product_chart(selected_title)
 
-    # 5-2. 나머지 상품 그래프 (옵션)
+    # 5-2. 나머지 상품 그래프 (기본: 전체)
     if not show_only_selected:
         for title in product_titles:
             if title == selected_title:
