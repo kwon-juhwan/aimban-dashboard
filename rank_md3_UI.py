@@ -24,7 +24,7 @@ if not csv_files:
 dfs = []
 for f in csv_files:
     df = pd.read_csv(f, header=None, encoding="utf-8-sig")
-    # rank_md3 기준: [날짜, 키워드, 순위, 상품명]
+    # [날짜, 키워드, 순위, 상품명]
     df.columns = ["date", "keyword", "rank", "title"]
     dfs.append(df)
 
@@ -117,12 +117,13 @@ else:
     )
 
 # =========================
-# 4-1. 상품 선택 (키워드별 제품 노출순위용)
+# 4-1. 상품 선택(그래프용)
 # =========================
 st.sidebar.subheader("📦 상품 선택(그래프용)")
 
 if filtered.empty:
     selected_title = None
+    product_titles = []
 else:
     product_titles = sorted(filtered["title"].unique())
     selected_title = st.sidebar.selectbox(
@@ -131,23 +132,22 @@ else:
     )
 
 # =========================
-# 5. 키워드별 제품 노출 순위 추이 (그래프)
+# 5. 키워드별 제품 순위 추이 (그래프)
 # =========================
 st.subheader("키워드별 제품 순위 추이 (그래프)")
 
-if filtered.empty or selected_title is None:
-    st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건이나 상품 선택을 확인해주세요.")
+if filtered.empty or not product_titles:
+    st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건을 확인해주세요.")
 else:
-    # 선택한 상품만 추출
-    product_df = filtered[filtered["title"] == selected_title].copy()
+    # 공통: rank 숫자형 변환
+    filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
 
-    if product_df.empty:
-        st.info("선택한 상품에 대한 데이터가 없습니다.")
-    else:
-        # 순위 숫자형으로
-        product_df["rank"] = pd.to_numeric(product_df["rank"], errors="coerce")
+    def draw_product_chart(title: str):
+        """특정 상품명에 대한 키워드별 순위 추이 그래프를 그립니다."""
+        product_df = filtered[filtered["title"] == title].copy()
+        if product_df.empty:
+            return
 
-        # 같은 날짜에 같은 키워드가 여러 번 있으면 최소 순위만 사용
         grouped = (
             product_df.groupby(["date", "keyword"])["rank"]
             .min()
@@ -155,17 +155,25 @@ else:
             .sort_values("date")
         )
 
-        # 날짜 x 키워드 피벗 → 각 키워드가 하나의 라인
         chart_df = grouped.pivot(
             index="date",
             columns="keyword",
             values="rank",
         ).sort_index()
 
-        st.caption(f"상품명: {selected_title}")
-
         if chart_df.empty:
-            st.info("그래프로 표시할 데이터가 없습니다.")
-        else:
-            # X축: 날짜, Y축: 순위, 각 라인: 키워드
-            st.line_chart(chart_df, use_container_width=True)
+            return
+
+        st.caption(f"상품명: {title}")
+        st.line_chart(chart_df, use_container_width=True)
+        st.markdown("---")
+
+    # 5-1. 먼저 선택한 상품의 그래프
+    if selected_title is not None:
+        draw_product_chart(selected_title)
+
+    # 5-2. 나머지 모든 상품 그래프
+    for title in product_titles:
+        if title == selected_title:
+            continue
+        draw_product_chart(title)
