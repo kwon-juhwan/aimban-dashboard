@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import glob
 import os
-import altair as alt  # ✅ 추가
+import altair as alt  # 그래프용
 
 RESULTS_DIR = "results"
 
@@ -15,7 +15,9 @@ st.set_page_config(
 st.title("📊 네이버 쇼핑 노출 순위 대시보드")
 st.caption("results 폴더의 CSV를 기반으로 키워드별 노출 순위 추이를 확인합니다.")
 
+# =========================
 # 1. CSV 파일 읽기
+# =========================
 csv_files = glob.glob(os.path.join(RESULTS_DIR, "*.csv"))
 
 if not csv_files:
@@ -31,7 +33,7 @@ for f in csv_files:
 
 data = pd.concat(dfs, ignore_index=True)
 
-# 날짜 타입 변환
+# 날짜 타입으로 변환
 data["date"] = pd.to_datetime(data["date"], errors="coerce")
 
 # =========================
@@ -57,7 +59,7 @@ selected_keywords = st.sidebar.multiselect(
     default=all_keywords,
 )
 
-# (옵션) 아임반만 보기 토글
+# 아임반만 보기
 only_aimban = st.sidebar.checkbox("상품명에 '아임반' 포함만 보기", value=False)
 
 # =========================
@@ -73,7 +75,7 @@ if only_aimban:
     filtered = filtered[filtered["title"].str.contains("아임반", na=False)]
 
 # =========================
-# 3-1. 상단 요약 카드
+# 3-1. 요약 정보
 # =========================
 st.subheader("요약 정보")
 
@@ -108,7 +110,6 @@ else:
     with st.expander("📄 상세 데이터 보기", expanded=True):
         st.dataframe(filtered_sorted, use_container_width=True)
 
-    # 다운로드 버튼
     csv_bytes = filtered_sorted.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button(
         label="📥 필터 적용 데이터 다운로드 (CSV)",
@@ -118,7 +119,7 @@ else:
     )
 
 # =========================
-# 4-1. 상품 선택(그래프용)
+# 4-1. 상품 선택 (그래프용)
 # =========================
 st.sidebar.subheader("📦 상품 선택(그래프용)")
 
@@ -132,6 +133,9 @@ else:
         options=product_titles,
     )
 
+# 선택한 상품만 볼지 여부
+show_only_selected = st.sidebar.checkbox("선택한 상품만 그래프로 보기", value=True)
+
 # =========================
 # 5. 키워드별 제품 순위 추이 (그래프)
 # =========================
@@ -140,16 +144,16 @@ st.subheader("키워드별 제품 순위 추이 (그래프)")
 if filtered.empty or not product_titles:
     st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건을 확인해주세요.")
 else:
-    # 공통: rank 숫자형 변환
+    # rank 숫자형 변환
     filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
 
     def draw_product_chart(title: str):
-        """특정 상품명에 대한 키워드별 순위 추이 그래프 (점 + 선, 툴팁)"""
+        """특정 상품명에 대한 키워드별 순위 추이 그래프 (Altair: 선 + 점 + 툴팁)"""
         product_df = filtered[filtered["title"] == title].copy()
         if product_df.empty:
             return
 
-        # 같은 날짜에 같은 키워드가 여러 개면 최소 순위 사용
+        # 같은 날짜에 같은 키워드가 여러 개 있으면 최소 순위만 사용
         grouped = (
             product_df.groupby(["date", "keyword"])["rank"]
             .min()
@@ -160,14 +164,13 @@ else:
         if grouped.empty:
             return
 
-        # Altair 차트: 점 + 선 + 툴팁, 하단 범례
         base = alt.Chart(grouped).encode(
             x=alt.X("date:T", title="날짜"),
             y=alt.Y("rank:Q", title="순위"),
             color=alt.Color(
                 "keyword:N",
                 title="키워드",
-                legend=alt.Legend(orient="bottom")  # 👈 키워드 범례 항상 표시
+                legend=alt.Legend(orient="bottom"),  # 키워드 범례 항상 표시
             ),
             tooltip=[
                 alt.Tooltip("date:T", title="날짜"),
@@ -184,12 +187,13 @@ else:
         st.altair_chart(chart, use_container_width=True)
         st.markdown("---")
 
-    # 5-1. 먼저 선택한 상품 그래프
+    # 5-1. 선택한 상품 그래프
     if selected_title is not None:
         draw_product_chart(selected_title)
 
-    # 5-2. 나머지 상품 그래프
-    for title in product_titles:
-        if title == selected_title:
-            continue
-        draw_product_chart(title)
+    # 5-2. 나머지 상품 그래프 (옵션)
+    if not show_only_selected:
+        for title in product_titles:
+            if title == selected_title:
+                continue
+            draw_product_chart(title)
