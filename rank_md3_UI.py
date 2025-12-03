@@ -5,9 +5,14 @@ import os
 
 RESULTS_DIR = "results"
 
-st.set_page_config(page_title="노출 순위 대시보드", layout="wide")
+st.set_page_config(
+    page_title="노출 순위 대시보드",
+    page_icon="📈",
+    layout="wide",
+)
 
-st.title("네이버 쇼핑 노출 순위 대시보드")
+st.title("📊 네이버 쇼핑 노출 순위 대시보드")
+st.caption("results 폴더의 CSV를 기반으로 키워드별 노출 순위 추이를 확인합니다.")
 
 # 1. CSV 파일 읽기
 csv_files = glob.glob(os.path.join(RESULTS_DIR, "*.csv"))
@@ -19,7 +24,7 @@ if not csv_files:
 dfs = []
 for f in csv_files:
     df = pd.read_csv(f, header=None, encoding="utf-8-sig")
-    # [날짜, 키워드, 순위, 상품명]
+    # rank_md3 기준: [날짜, 키워드, 순위, 상품명]
     df.columns = ["date", "keyword", "rank", "title"]
     dfs.append(df)
 
@@ -28,8 +33,10 @@ data = pd.concat(dfs, ignore_index=True)
 # 날짜 타입 변환
 data["date"] = pd.to_datetime(data["date"], errors="coerce")
 
+# =========================
 # 2. 사이드바 필터
-st.sidebar.header("필터")
+# =========================
+st.sidebar.header("🔎 필터")
 
 # 날짜 필터
 min_date = data["date"].min()
@@ -49,64 +56,97 @@ selected_keywords = st.sidebar.multiselect(
     default=all_keywords,
 )
 
+# (옵션) 아임반만 보기 토글
+only_aimban = st.sidebar.checkbox("상품명에 '아임반' 포함만 보기", value=False)
+
+# =========================
 # 3. 필터 적용
+# =========================
 filtered = data[
     (data["date"].dt.date >= start_date)
     & (data["date"].dt.date <= end_date)
     & (data["keyword"].isin(selected_keywords))
 ].copy()
 
-st.subheader("필터 적용된 결과표")
-st.dataframe(filtered.sort_values(["date", "keyword", "rank"]))
+if only_aimban:
+    filtered = filtered[filtered["title"].str.contains("아임반", na=False)]
 
-# 3-1. 상품 선택 (그래프용)
-st.sidebar.subheader("상품 선택")
+# =========================
+# 3-1. 상단 요약 카드
+# =========================
+st.subheader("요약 정보")
 
 if filtered.empty:
-    selected_title = None
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("데이터 건수", 0)
+    col2.metric("기간(일)", 0)
+    col3.metric("선택된 키워드 수", len(selected_keywords))
+    col4.metric("최신 데이터 날짜", "-")
 else:
-    product_titles = sorted(filtered["title"].unique())
-    selected_title = st.sidebar.selectbox(
-        "그래프로 볼 상품명",
-        options=product_titles,
+    num_rows = len(filtered)
+    num_days = filtered["date"].dt.date.nunique()
+    num_kw = filtered["keyword"].nunique()
+    latest_date = filtered["date"].max().date().isoformat()
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("데이터 건수", f"{num_rows:,}")
+    col2.metric("기간(일)", num_days)
+    col3.metric("선택된 키워드 수", num_kw)
+    col4.metric("최신 데이터 날짜", latest_date)
+
+# =========================
+# 4. 필터 적용된 결과표
+# =========================
+st.subheader("필터 적용된 결과표")
+
+if filtered.empty:
+    st.info("현재 필터 조건에 해당되는 데이터가 없습니다.")
+else:
+    filtered_sorted = filtered.sort_values(["date", "keyword", "rank"])
+
+    with st.expander("📄 상세 데이터 보기", expanded=True):
+        st.dataframe(filtered_sorted, use_container_width=True)
+
+    # 다운로드 버튼
+    csv_bytes = filtered_sorted.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button(
+        label="📥 필터 적용 데이터 다운로드 (CSV)",
+        data=csv_bytes,
+        file_name="naver_rank_filtered.csv",
+        mime="text/csv",
     )
 
-# 4. 키워드별 제품 순위 추이 (그래프)
-st.subheader("키워드별 제품 순위 추이 (그래프)")
+# =========================
+# 5. 키워드별 순위 추이 차트 (기존 로직 그대로)
+# =========================
+st.subheader("키워드별 순위 추이 (그래프)")
 
-if filtered.empty or selected_title is None:
-    st.info("현재 필터 조건에 해당되는 데이터가 없거나, 선택할 상품명이 없습니다.")
-else:
-    # 선택한 상품만 필터
-    product_df = filtered[filtered["title"] == selected_title].copy()
+if not filtered.empty:
+    # 순위는 숫자형으로
+    filtered["rank"] = pd.to_numeric(filtered["rank"], errors="coerce")
 
-    if product_df.empty:
-        st.info("선택한 상품에 대한 데이터가 없습니다.")
+    # 키워드 하나만 선택되었을 때는 제목까지 같이 보고 싶을 수도 있음
+    if len(selected_keywords) == 1:
+        st.caption(f"선택된 키워드: {selected_keywords[0]} (같은 날짜의 최소 순위 기준)")
+        # 같은 날짜에 같은 키워드+상품 여러 개 있을 수 있으니, 최소 순위만 사용
+        chart_df = (
+            filtered.groupby(["date"])["rank"]
+            .min()
+            .reset_index()
+            .sort_values("date")
+        )
     else:
-        # 순위 숫자형 변환
-        product_df["rank"] = pd.to_numeric(product_df["rank"], errors="coerce")
-
-        # 날짜-키워드별 최소 순위 사용 (같은 날짜에 여러 행이 있을 경우)
-        grouped = (
-            product_df
-            .groupby(["date", "keyword"])["rank"]
+        # 여러 키워드 → 키워드별 최소 순위를 사용
+        chart_df = (
+            filtered.groupby(["date", "keyword"])["rank"]
             .min()
             .reset_index()
             .sort_values("date")
         )
 
-        # 피벗: index=날짜, columns=키워드, values=순위
-        chart_df = grouped.pivot(
-            index="date",
-            columns="keyword",
-            values="rank",
-        ).sort_index()
-
-        # 그래프 제목에 상품명 표시
-        st.caption(f"상품명: {selected_title}")
-
-        if chart_df.empty:
-            st.info("그래프로 표시할 데이터가 없습니다.")
-        else:
-            # X축: 날짜, Y축: 순위, 컬러/범례: 키워드
-            st.line_chart(chart_df, use_container_width=True)
+    # 순위가 낮을수록 상위이므로 y축 뒤집어서 보여 주는 게 직관적
+    st.line_chart(
+        chart_df.pivot(index="date", columns="keyword", values="rank")
+    )
+else:
+    st.info("그래프를 그릴 수 있는 데이터가 없습니다. 필터 조건을 조정해 보세요.")
